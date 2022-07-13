@@ -47,7 +47,7 @@ func New() Container {
 }
 
 // bind maps an abstraction to concrete and instantiates if it is a singleton binding.
-func (c Container) bind(resolver interface{}, isSingleton bool, bindType BindType, opt *Option) error {
+func (c Container) bind(resolver interface{}, bindType BindType, opt *Option) error {
 	reflectedResolver := reflect.TypeOf(resolver)
 	if reflectedResolver.Kind() != reflect.Func {
 		return errors.New("container: the resolver must be a function")
@@ -60,14 +60,14 @@ func (c Container) bind(resolver interface{}, isSingleton bool, bindType BindTyp
 		}
 	}
 
-	concrete, err := c.invoke(resolver, opt)
-	if err != nil {
-		return err
-	}
-
-	c[reflectedResolver.Out(0)][opt.name] = &binding{resolver: resolver, bindType: bindType}
-	if isSingleton {
-		c[reflectedResolver.Out(0)][opt.name].concrete = concrete
+	if bindType == singletonType {
+		concrete, err := c.invoke(resolver, opt)
+		if err != nil {
+			return err
+		}
+		c[reflectedResolver.Out(0)][opt.name] = &binding{resolver: resolver, concrete: concrete, bindType: bindType}
+	} else {
+		c[reflectedResolver.Out(0)][opt.name] = &binding{resolver: resolver, concrete: nil, bindType: bindType}
 	}
 
 	return nil
@@ -145,9 +145,9 @@ func (c Container) Reset() {
 
 func (c Container) singleton(resolver interface{}, opt *Option) error {
 	if opt.delay {
-		return c.bind(resolver, false, delaySingletonType, opt)
+		return c.bind(resolver, delaySingletonType, opt)
 	} else {
-		return c.bind(resolver, true, singletonType, opt)
+		return c.bind(resolver, singletonType, opt)
 	}
 }
 
@@ -167,7 +167,7 @@ func (c Container) NamedSingleton(name string, resolver interface{}, opt ...Opti
 }
 
 func (c Container) transient(resolver interface{}, opt *Option) error {
-	return c.bind(resolver, false, transientType, opt)
+	return c.bind(resolver, transientType, opt)
 }
 
 // Transient binds an abstraction to concrete in transient mode.
