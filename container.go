@@ -60,15 +60,26 @@ func (c Container) bind(resolver interface{}, bindType BindType, opt *Option) er
 		}
 	}
 
+	var concrete interface{}
+	var err error
 	if bindType == singletonType {
-		concrete, err := c.invoke(resolver, opt)
+		concrete, err = c.invoke(resolver, opt)
 		if err != nil {
 			return err
 		}
-		c[reflectedResolver.Out(0)][opt.name] = &binding{resolver: resolver, concrete: concrete, bindType: bindType}
 	} else {
-		c[reflectedResolver.Out(0)][opt.name] = &binding{resolver: resolver, concrete: nil, bindType: bindType}
+		concrete = nil
 	}
+	if c[reflectedResolver.Out(0)][opt.name] != nil {
+		rType := reflectedResolver.Out(0)
+		name := opt.name
+		if opt.name == "" {
+			name = "type"
+		}
+		return fmt.Errorf("container: %s binding [%s] already exists", rType.String(), name)
+	}
+
+	c[reflectedResolver.Out(0)][opt.name] = &binding{resolver: resolver, concrete: concrete, bindType: bindType}
 
 	return nil
 }
@@ -104,16 +115,12 @@ func (c Container) arguments(function interface{}, opt *Option) ([]reflect.Value
 	for i := 0; i < argumentsCount; i++ {
 		abstraction := reflectedFunction.In(i)
 
-		if concreteMap, exist := c[abstraction]; exist {
-			if concrete, exist := c.getBinding(concreteMap, toNames(opt.name)); exist {
-				concreteInstance, err := concrete.make(c, opt)
-				if err != nil {
-					return nil, err
-				}
-				arguments[i] = reflect.ValueOf(concreteInstance)
-			} else {
-				return nil, fmt.Errorf("container: no binding found for %s", abstraction.String())
+		if concrete, exist := c.getBinding(abstraction, toNames(opt.name)); exist {
+			concreteInstance, err := concrete.make(c, opt)
+			if err != nil {
+				return nil, err
 			}
+			arguments[i] = reflect.ValueOf(concreteInstance)
 		} else {
 			return nil, fmt.Errorf("container: no binding found for %s", abstraction.String())
 		}
@@ -122,9 +129,10 @@ func (c Container) arguments(function interface{}, opt *Option) ([]reflect.Value
 	return arguments, nil
 }
 
-func (c Container) getBinding(src map[string]*binding, names []string) (*binding, bool) {
-	if src == nil {
-		panic("not found concrete")
+func (c Container) getBinding(t reflect.Type, names []string) (*binding, bool) {
+	src := c[t]
+	if c[t] == nil {
+		panic(fmt.Sprintf("container: no binding found for %s", t.String()))
 	}
 
 	for i := 0; i < len(names); i++ {
@@ -225,7 +233,7 @@ func (c Container) resolve(abstraction interface{}, opt *Option) error {
 	if receiverType.Kind() == reflect.Ptr {
 		elem := receiverType.Elem()
 
-		if concrete, exist := c.getBinding(c[elem], toNames(opt.name)); exist {
+		if concrete, exist := c.getBinding(elem, toNames(opt.name)); exist {
 			if instance, err := concrete.make(c, opt); err == nil {
 				reflect.ValueOf(abstraction).Elem().Set(reflect.ValueOf(instance))
 				return nil
@@ -292,7 +300,7 @@ func (c Container) Fill(structure interface{}) error {
 						}
 					}
 
-					if concrete, exist := c.getBinding(c[f.Type()], names); exist {
+					if concrete, exist := c.getBinding(f.Type(), names); exist {
 						instance, _ := concrete.make(c, opt)
 
 						ptr := reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem()
@@ -301,7 +309,8 @@ func (c Container) Fill(structure interface{}) error {
 						continue
 					}
 
-					return errors.New(fmt.Sprintf("container: cannot make %v field", s.Type().Field(i).Name))
+					return errors.New(fmt.Sprintf("container: cannot make %v(%v) field with tags [%s]",
+						s.Type().Field(i).Name, f.Type().String(), strings.Join(names, ",")))
 				}
 			}
 

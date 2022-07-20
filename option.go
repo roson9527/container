@@ -26,21 +26,6 @@ func LoadOption(opt ...OptionFunc) *Option {
 	return option
 }
 
-//
-//func SetName(name string) OptionFunc {
-//	return func(option *Option) error {
-//		option.name = name
-//		return nil
-//	}
-//}
-//
-//func SetDelay(delay bool) OptionFunc {
-//	return func(option *Option) error {
-//		option.delay = delay
-//		return nil
-//	}
-//}
-
 func toNames(src string) []string {
 	// 如果为空那么则是降级寻找默认注册类型
 	if len(src) == 0 {
