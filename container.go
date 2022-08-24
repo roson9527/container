@@ -19,7 +19,7 @@ type binding struct {
 }
 
 // make resolves the binding if needed and returns the resolved concrete.
-func (b binding) make(c Container, opt *Option) (interface{}, error) {
+func (b *binding) make(c Container, opt *Option) (interface{}, error) {
 	if b.concrete != nil {
 		return b.concrete, nil
 	}
