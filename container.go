@@ -24,16 +24,16 @@ func (b *binding) make(c Container, opt *Option) (interface{}, error) {
 		return b.concrete, nil
 	}
 
-	if b.bindType == delaySingletonType {
-		var err error
-		b.concrete, err = c.invoke(b.resolver, opt)
-		if err != nil {
-			return nil, err
-		}
+	concrete, err := c.invoke(b.resolver, opt)
+	if err != nil {
+		return nil, err
+	}
+	if b.bindType == singletonLazyType || b.bindType == singletonType {
+		b.concrete = concrete
 		return b.concrete, nil
 	}
 
-	return c.invoke(b.resolver, opt)
+	return concrete, err
 }
 
 // Container holds the bindings and provides methods to interact with them.
@@ -60,6 +60,10 @@ func (c Container) bind(resolver interface{}, bindType BindType, opt *Option) er
 		}
 	}
 
+	if err := c.validateResolverFunction(reflectedResolver); err != nil {
+		return err
+	}
+
 	var concrete interface{}
 	var err error
 	if bindType == singletonType {
@@ -70,6 +74,7 @@ func (c Container) bind(resolver interface{}, bindType BindType, opt *Option) er
 	} else {
 		concrete = nil
 	}
+
 	if c[reflectedResolver.Out(0)][opt.name] != nil {
 		rType := reflectedResolver.Out(0)
 		name := opt.name
@@ -84,6 +89,25 @@ func (c Container) bind(resolver interface{}, bindType BindType, opt *Option) er
 	return nil
 }
 
+func (c Container) validateResolverFunction(funcType reflect.Type) error {
+	retCount := funcType.NumOut()
+
+	// 返回值判断
+	if retCount == 0 || retCount > 2 {
+		return errors.New("container: resolver function signature is invalid - it must return abstract, or abstract and error")
+	}
+
+	// 输入不能等于输出产生循环依赖
+	resolveType := funcType.Out(0)
+	for i := 0; i < funcType.NumIn(); i++ {
+		if funcType.In(i) == resolveType {
+			return fmt.Errorf("container: resolver function signature is invalid - depends on abstract it returns")
+		}
+	}
+
+	return nil
+}
+
 // invoke calls a function and its returned values.
 // It only accepts one value and an optional error.
 func (c Container) invoke(function interface{}, opt *Option) (interface{}, error) {
@@ -94,16 +118,12 @@ func (c Container) invoke(function interface{}, opt *Option) (interface{}, error
 
 	values := reflect.ValueOf(function).Call(arguments)
 
-	if len(values) == 1 || len(values) == 2 {
-		if len(values) == 2 && values[1].CanInterface() {
-			if err, ok := values[1].Interface().(error); ok {
-				return values[0].Interface(), err
-			}
+	if len(values) == 2 && values[1].CanInterface() {
+		if err, ok := values[1].Interface().(error); ok {
+			return values[0].Interface(), err
 		}
-		return values[0].Interface(), nil
 	}
-
-	return nil, errors.New("container: resolver function signature is invalid")
+	return values[0].Interface(), nil
 }
 
 // arguments returns the list of resolved arguments for a function.
@@ -153,7 +173,7 @@ func (c Container) Reset() {
 
 func (c Container) singleton(resolver interface{}, opt *Option) error {
 	if opt.delay {
-		return c.bind(resolver, delaySingletonType, opt)
+		return c.bind(resolver, singletonLazyType, opt)
 	} else {
 		return c.bind(resolver, singletonType, opt)
 	}
