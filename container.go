@@ -290,53 +290,65 @@ func (c Container) Fill(structure interface{}) error {
 
 	opt := defaultOption()
 
-	if receiverType.Kind() == reflect.Ptr {
-		elem := receiverType.Elem()
-		if elem.Kind() == reflect.Struct {
-			s := reflect.ValueOf(structure).Elem()
+	if receiverType.Kind() != reflect.Ptr {
+		return errors.New("container: invalid structure - input must be a pointer")
+	}
 
-			for i := 0; i < s.NumField(); i++ {
-				f := s.Field(i)
+	elem := receiverType.Elem()
+	if elem.Kind() != reflect.Struct {
+		return errors.New("container: invalid structure - elem must be a struct")
+	}
 
-				// 使用了新的匹配方式
-				// container:type -> 按类型进行匹配
-				// container:name -> 按类型+名称进行匹配（外部可访问的属性名字）
-				if t, exist := s.Type().Field(i).Tag.Lookup("container"); exist {
-					subTs := strings.Split(t, ",")
-					names := make([]string, 0)
+	s := reflect.ValueOf(structure).Elem()
 
-					if len(subTs) == 0 {
+	for i := 0; i < s.NumField(); i++ {
+		f := s.Field(i)
+
+		// 使用了新的匹配方式
+		// container:type -> 按类型进行匹配
+		// container:name -> 按类型+名称进行匹配（外部可访问的属性名字）
+		if t, exist := s.Type().Field(i).Tag.Lookup("container"); exist {
+			subTs := strings.Split(t, ",")
+			names := make([]string, 0)
+
+			if len(subTs) == 0 {
+				names = append(names, "")
+			} else {
+				for _, subT := range subTs {
+					switch subT {
+					case "type":
 						names = append(names, "")
-					} else {
-						for _, subT := range subTs {
-							switch subT {
-							case "type":
-								names = append(names, "")
-							case "name":
-								names = append(names, s.Type().Field(i).Name)
-							default:
-								names = append(names, subT)
-							}
-						}
+					case "name":
+						names = append(names, s.Type().Field(i).Name)
+					default:
+						names = append(names, subT)
 					}
-
-					if concrete, exist := c.getBinding(f.Type(), names); exist {
-						instance, _ := concrete.make(c, opt)
-
-						ptr := reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem()
-						ptr.Set(reflect.ValueOf(instance))
-
-						continue
-					}
-
-					return errors.New(fmt.Sprintf("container: cannot make %v(%v) field with tags [%s]",
-						s.Type().Field(i).Name, f.Type().String(), strings.Join(names, ",")))
 				}
 			}
 
-			return nil
+			bindingIns, bindingExist := c.getBinding(f.Type(), names)
+			if !bindingExist {
+				return makeError(s, i, f, names, nil)
+			}
+
+			instance, makeErr := bindingIns.make(c, opt)
+			if makeErr != nil {
+				return makeError(s, i, f, names, makeErr)
+			}
+
+			ptr := reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem()
+			ptr.Set(reflect.ValueOf(instance))
 		}
 	}
 
-	return errors.New("container: invalid structure")
+	return nil
+}
+
+func makeError(s reflect.Value, i int, f reflect.Value, names []string, err error) error {
+	if err != nil {
+		return errors.New(fmt.Sprintf("container: cannot make %v(%v) field with tags [%s], err: %v",
+			s.Type().Field(i).Name, f.Type(), strings.Join(names, ","), err))
+	}
+	return errors.New(fmt.Sprintf("container: cannot make %v(%v) field with tags [%s]",
+		s.Type().Field(i).Name, f.Type(), strings.Join(names, ",")))
 }
